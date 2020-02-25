@@ -14,6 +14,6 @@ Below are the major compoents of the pipeline
 - Individual scripts wrapped inside `nextflow processes` to carry out the actual tasks such as the *alighnemnt* or *marking duplicate reads*, or running a *structural variant caller*
 
 ## How to run the pipeline
-For a run on your machine (or any other infrastructure such as an HPC, or AWS), you need to add corrresponding configuration under the `conf`. The *configuration* defines a *profile* in Nextflow lingo and needs to be passed at the commandline when running the pipeline. See the `Makefile` in the top level directory for an example run.
+For a run on your machine (or any other infrastructure such as an HPC, or AWS), you need to add corrresponding configuration under the `conf`. The *configuration* defines a *profile* in Nextflow lingo and needs to be passed at the commandline when running the pipeline. See the `Makefile` in the top level directory for an example run. At the command prompt (while running thorugh Nextflow), you will need to pass a *samples.tsv* (tab delimited) carrying atleast three columns. The first column specifying the *sample name*, and the next two specifying the paths to the *first* and the *second reads*.
 
 
