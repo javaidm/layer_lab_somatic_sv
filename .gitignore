@@ -1,0 +1,6 @@
+.nextflow/
+*~
+.nextflow.log*
+nf_reports/
+tmp/
+work/
