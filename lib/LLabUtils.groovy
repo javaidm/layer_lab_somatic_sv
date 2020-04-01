@@ -5,7 +5,7 @@ import nextflow.Channel
 
 class LLabUtils {
 
-static def extractSample(tsvFile) {
+static def extractSamples(tsvFile) {
   // Channeling the TSV file containing FASTQ or BAM
   // Format is: "subject gender status sample lane fastq1 fastq2"
   // or: "subject gender status sample lane bam"
@@ -14,9 +14,13 @@ static def extractSample(tsvFile) {
   .splitCsv(sep: '\t')
   .map { row ->
     def parent_dir = file(tsvFile).parent
-    def sample  = row[0]
-    def path1 = "${parent_dir}/${sample}/${row[1]}"
-    def path2 = "${parent_dir}/${sample}/${row[2]}"
+    def sample  = row[0].trim()
+    def trimmed_r1 = "${row[1]}".trim()
+    def trimmed_r2 = "${row[2]}".trim()
+    def path1 = "${parent_dir}/${trimmed_r1}"
+    def path2 = "${parent_dir}/${trimmed_r2}"
+    // println("path1:$path1")
+    // println("path2:$path2")
     def file1      = this.returnFile(path1)
     def file2      = this.returnFile(path2)
     [sample,[ file1, file2]]
@@ -24,27 +28,48 @@ static def extractSample(tsvFile) {
   
 } // end of method extractSample()
 
-static def extractConditions(tsvFile) {
-  def parent_dir = file(tsvFile).parent
-  println("extractConditions() $tsvFile")
-  def l = []
-  Channel.from(tsvFile)
-  .splitCsv(sep: '\t', skip: 1)
-  .map {row ->
-    // println("processing $row")
-    [row[0],row[1]]
+static def extractControls(tsvFile) {
+  def normals = []
+  def allLines = tsvFile.readLines()
+  for (line in allLines){
+    def trimmed = line.trim()
+    def columns = trimmed.split()
+    
+    // pick the first column value for normals
+    if (columns.size() > 0 ){
+      normals.add(columns[0])
+    }    
   }
-} // end of method extractSample()
+  return normals
+} // end of method extractControls()
 
-// static def extractCramIndexPairs(crams_dir) {
-//   Channel
-//     .fromFilePairs("${crams_dir}/*.cram", size: -1) { 
-//       file ->
-//       sample = "${file.simpleName}"
-//       index = "${file.parent}/${file.name}.crai"
-//       [sample, [file, index]] 
-//       }
-// } // end of method extractCramIndexPairs()
+static def sampleInList(sample_file_name, list_of_samples){
+  def retVal = false
+  list_of_samples.each{
+      // println("checking $it")
+      if (sample_file_name ==~ /.*$it.*/ )
+        retVal = true
+     }
+     return retVal
+}
+
+
+static def extractCases(tsvFile) {
+  // assuming the first column in the control, and the rest are the cases
+  def cases = []
+  def allLines = tsvFile.readLines()
+  for (line in allLines){
+    def trimmed = line.trim()
+    def columns = trimmed.split()
+    columns.eachWithIndex { it, i ->
+      if (i != 0){
+        // println("i: $i")
+        cases.add(it)
+      }
+    }
+  } // end for
+  return cases
+} // end of method extractCases()
 
 static def extractSampleAndConditionFiles(crams_dir){
   def process_list=[]
@@ -123,6 +148,12 @@ static def runSanityChecks(dirPath){
     def chrs = (1..22).collect()
     chrs.addAll(['X', 'Y', 'MT'])
     return chrs
+  }
+
+  static def getChrmListHg38(){
+    def chrs = (1..22).collect()
+    chrs.addAll(['X', 'Y'])
+    return chrs.collect {"chr$it"}
   }
   
   // // Return element in list of allowed params

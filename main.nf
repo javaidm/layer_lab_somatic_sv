@@ -1,6 +1,6 @@
 #!/usr/bin/env nextflow
 nextflow.preview.dsl=2
-initParamsToDefaults()
+initParamsToDefaults(params)
 if (params.help) exit 0, helpMessage()
 _PLATFORM = "ILLUMINA"
 _THREADS  = 32
@@ -29,7 +29,7 @@ if (workflow.profile == 'fiji'){
   ref_dict = params.refDict ?: "$fiji_ref_dict"
   afOnlyGnomad = params.afOnlyGnomad ?: "$fiji_af_only_gnomad"
   afOnlySNPOnlyGnomad = params.afOnlySNPOnlyGnomad ?: "$fiji_af_only_snp_only_gnomad"
-  gnomad_genome = params.gnomadGenome?: "$fiji_gnomad_genome"
+  // gnomad_genome = params.gnomadGenome?: "$fiji_gnomad_genome"
   gnomadRef = params.gnomadRef ?: "$fiji_gnomad_ref"
   homo_sapiens_genes = params.homoSapiensGenes ?: "$fiji_homo_sapiens_genes"
   homo_sapiens_exons = params.homoSapiensExones ?: "$fiji_homo_sapiens_exons"
@@ -78,7 +78,7 @@ if (params.sampleTsv) tsvPath = params.sampleTsv
 if (tsvPath){
     tsvFile = file(tsvPath)
     if (!tsvFile.exists()) exit 1, "${tsvPath} does not exists!"
-    inputFiles = LLabUtils.extractSample(tsvFile)
+    inputFiles = LLabUtils.extractSamples(tsvFile)
 }else{
   // Define channel for reading file pairs
   Channel
@@ -86,7 +86,39 @@ if (tsvPath){
       .ifEmpty { exit 1, "Cannot find any reads matching: ${params.reads}"}
       .set {inputFiles}
 }
-ch_conditions = LLabUtils.extractConditions(file(params.conditionsTsv))
+list_of_controls = LLabUtils.extractControls(file(params.conditionsTsv))
+list_of_cases = LLabUtils.extractCases(file(params.conditionsTsv))
+
+if (params.withoutGatk & params.withoutSavvycnv & params.withoutCnvkit){
+  println ("You have disablled all three callers (gatk, savvy, cnvkit), only the allignment will run")
+}
+else{
+  println ("Following copy number callers will run: ")
+  if (!params.withoutGatk){
+    println ("GATK (mutect2 based)")
+  }
+
+  if (!params.withoutSavvycnv){
+    println ("SavvyCNV")
+  }
+
+  if (!params.withoutCnvkit){
+    println ("CNVKit")
+  }
+}
+
+// sample_name = 'KU1919P'
+// if (list_of_normals.find{it == sample_name}){
+//   println("Found $sample_name")
+// }else{
+//   println("Did not find $sample_name")
+// }
+
+// file(params.conditionsTsv)
+//     .readLines()
+//     .each { println it }
+// ch_conditions = LLabUtils.extractConditions(file(params.conditionsTsv))
+
 // ch_conditions = LLabUtils.extractConditions(file(params.conditionsTsv))
 // CRAMS_DIR = "${OUT_DIR}/aligned/crams"
 // BAMS_DIR = "${OUT_DIR}/aligned/bams"
@@ -108,66 +140,67 @@ ch_conditions = LLabUtils.extractConditions(file(params.conditionsTsv))
 //     { file -> file.simpleName }
 // PON_PATH='/Shares/layer_shared/projects/sequence_analysis/cancer_center_hg38/misc/pon/pon.vcf.gz'
 // ch_pon = Channel.fromPath(PON_PATH)
+// Generate a channel holding chromosome list
+listOfChromosoms = []
+if (workflow.profile == 'fiji_hg37'){
+    listOfChromosoms = LLabUtils.getChrmList()
+}else{
+   listOfChromosoms = LLabUtils.getChrmListHg38()
+}
 
 Channel.from(LLabUtils.getChrmList())
-.set{chrmList}
+    .set{chrmListCh}
+
 // CRAMS_DIR_ABS_PATH = "${outDir}/align"
 
 workflow{
-    // GATK portion
-    PreprocessIntervals()
-    CollectReadCounts(ch_crams,
-                      PreprocessIntervals.out)
-    CreateReadCountSomaticPON(
-      CollectReadCounts.out.collect()
-    )
+    MapReads(inputFiles)
+    CramToBam(MapReads.out[0])
+    if (params.withoutGatk == false)
+    {
+      // GATK portion
+      PreprocessIntervals()      
+      CollectReadCounts(MapReads.out,
+                        PreprocessIntervals.out)
+      CreateReadCountSomaticPON(
+        CollectReadCounts.out.collect()
+      )
+      
+      DenoiseReadCounts(
+        CollectReadCounts.out,
+        CreateReadCountSomaticPON.out
+      )
+      PlotDenoisedCopyRatios(DenoiseReadCounts.out[0],
+                            DenoiseReadCounts.out[1])
+
     
-    DenoiseReadCounts(
-      CollectReadCounts.out,
-      CreateReadCountSomaticPON.out
-    )
-    PlotDenoisedCopyRatios(DenoiseReadCounts.out[0],
-                          DenoiseReadCounts.out[1])
 
-   
+      RunModelSegments(DenoiseReadCounts.out[1])
+      PlotModeledSegments(DenoiseReadCounts.out[1].collect(),
+                      RunModelSegments.out[2])
+      CallCopyRatioSegments(RunModelSegments.out[1])
+      GetGeneSummaryGATK(CallCopyRatioSegments.out)
+    }
+    if (params.withoutSavvycnv == false)
+    {
+      // SavvyCNV related Summaries
+      GenSavvyCNVCoverageSummary(CramToBam.out)
+      RunSavvyCNV(GenSavvyCNVCoverageSummary.out.collect())
+    }
+      // TestProc(
+      //   CramToBam.out[0].collect(),
+      //   CramToBam.out[1].collect()
+      // )
+        
+    if (params.withoutCnvkit == false)
+    {
+      // CNVKIT related portion
+      RunCNVKitBatchMode(
+        CramToBam.out[0].collect(),
+        CramToBam.out[1].collect()
+      )
 
-    RunModelSegments(DenoiseReadCounts.out[1])
-    PlotModeledSegments(DenoiseReadCounts.out[1].collect(),
-                    RunModelSegments.out[2])
-    CallCopyRatioSegments(RunModelSegments.out[1])
-    GetGeneSummaryGATK(CallCopyRatioSegments.out)
-    
-  //  SavvyCNV related Summaries
-   GenSavvyCNVCoverageSummary(ch_bams)
-   RunSavvyCNV(GenSavvyCNVCoverageSummary.out.collect())
-  
-  // CNVKIT related portion
-  RunCNVKitBatchMode(BAMS_DIR)
-  //  PrepareBaitedTargets_cnvkit()
-  //  GenAccessibleRegions_cnvkit()
-  //  DeriveAntitargetRegions_cnvkit(PrepareBaitedTargets_cnvkit.out,
-  //                           GenAccessibleRegions_cnvkit.out)
-  //  RunAutoBin_cnvkit(ch_all_bams.collect(),
-  //                           PrepareBaitedTargets_cnvkit.out,
-  //                           GenAccessibleRegions_cnvkit.out)
-  //  GetCoverage_cnvkit(ch_bams,
-  //                           PrepareBaitedTargets_cnvkit.out,
-  //                           DeriveAntitargetRegions_cnvkit.out)
-  // GetPooledRef_cnvkit(GetCoverage_cnvkit.out[0].collect(),
-  //                     GetCoverage_cnvkit.out[1].collect())
-  // GetCnr_cnvkit(GetCoverage_cnvkit.out[0],
-  //                     GetCoverage_cnvkit.out[1],
-  //                     GetPooledRef_cnvkit.out)
-  // GetSegments_cnvkit(GetCnr_cnvkit.out)
-  // CallSegments_cnvkit(GetSegments_cnvkit.out)
-  // PlotScatter_cnvkit(GetCnr_cnvkit.out,
-  //                   GetSegments_cnvkit.out)
-
-  // // PlotIdeogram_cnvkit(GetCnr_cnvkit.out,
-  // //                   GetSegments_cnvkit.out)
-                    
-  // PlotHeatmap_cnvkit(GetSegments_cnvkit.out.collect())
-
+    }
 } // end of workflow
 
 
@@ -180,7 +213,7 @@ workflow.onComplete {
 	println ( workflow.success ? "Done!" : "Oops .. something went wrong" )
 }
 
-def initParamsToDefaults(){
+def initParamsToDefaults(params){
   def null_path = ''
   params.reads = null_path
   params.runName = ''
@@ -194,8 +227,9 @@ def initParamsToDefaults(){
   params.help = false  
   params.skipQc = false
   params.skipFastQc = false
-
-
+  params.withoutGatk = false
+  params.withoutSavvycnv = false
+  params.withoutCnvkit = false
 }
 
 /* Helper functions */
@@ -211,34 +245,82 @@ def layerLabMessage() {
 def helpMessage() {
   // Display help message
   this.layerLabMessage()
-  runStr = "nextflow run javaidm/layer_lab_dna_seq_vc "
+  runStrGitHub = "nextflow run javaidm/layer_lab_somatic_sv "
+  runStr = "nextflow run main.nf "
   log.info "    Usage:"
-  log.info "       $runStr --sample <file.tsv>"
-  log.info "       $runStr --reads <shell glob pointing to the reads>"
+  log.info "       $runStr --params-file <params.yaml>"
+  log.info " * All the params below could be set (in Camel Case) in a yaml file (see the params.yaml as an exampl3) *"
   log.info "    --sample-tsv <file.tsv>"
   log.info "       Specify a TSV file containing sample_id, path_to_read1, path_to_read2."
-  log.info "    --reads <shell glob>"
-  log.info "       Specify a shell glob pointing to the reads."
   log.info "    --results-dir <directory>"
   log.info "       Specify a directory to hold the analysis results."
   log.info "    --run-name"
   log.info "       Specify a run name, results will be stored under results-dir/run-name"
-  log.info "    --manifest [optional <manifest.csv>]"
-  log.info "       Specify an optional manifest file."  
-  log.info "    --dbsnp [optional if already specified as part of a Nextflow Profile]"
-  log.info "    --ensembl-gene-annotation [optional if already specified as part of a Nextflow Profile]"
-  log.info "    --known-indels [optional if already specified as part of a Nextflow Profile]"
-  log.info "    --ref-fasta [optional if already specified as part of a Nextflow Profile]"
-  log.info "       Human Genome Reference File."  
-  log.info "    --onlyQC"
-  log.info "       Run only QC tools and gather reports."
+  log.info "    --conditions-tsv <conditions.tsv>"
+  log.info "       Specifying conditions of the experiment"
+  log.info "    --without-gatk "
+  log.info "       Run the pipeline without the GATK cnv workflow (mutect2 based)"
+  log.info "    --without-savvycnv "
+  log.info "       Run the pipeline without the SavvyCNV cnv caller"
+  log.info "    --without-cnvkit "
+  log.info "       Run the pipeline without the CNVKit cnv caller"
   log.info "    --help"
   log.info "       you're reading it."
-  log.info "    --verbose"
-  log.info "       Adds more verbosity to workflow."
+  
 }
 
 /* Processes */
+
+process MapReads {
+    echo true
+    tag "$sample"
+    publishDir "${OUT_DIR}/align/crams/" , mode: 'copy', overwrite: false
+    input:
+    tuple val(sample), file(reads)
+
+    output:
+    file(out_file)
+    file("${out_file}.crai")
+
+    script:
+    r1 = reads[0]
+    r2 = reads[1]
+    
+    script:
+    out_file = "${sample}.cram"
+   """
+   bwa mem \
+    -t $_THREADS -R "@RG\tID:$sample\tSM:$sample\tPL:$_PLATFORM\tPU:$sample\tLB:$sample" $ref_fasta $r1 $r2 \
+    | samblaster \
+    | samtools sort --output-fmt-option seqs_per_slice=4000 -O CRAM --reference $ref_fasta -m 18G -@ 6 /dev/stdin -o $out_file \
+    && samtools index $out_file
+    
+   """
+}
+
+process CramToBam{
+    echo true
+    tag "$sample"
+    publishDir "${OUT_DIR}/align/bams" , mode: 'copy', overwrite: false
+    input:
+    file(cram)
+
+    output:
+    file(out_file)
+    file("${out_file}.bai")
+
+    script:
+    sample = "${cram.simpleName}"
+    out_file = "${sample}.bam"
+    
+    script:
+   """
+   samtools view -T $ref_fasta -b -o $out_file $cram \
+   && samtools index $out_file
+   """
+}
+
+
 process PreprocessIntervals {
     publishDir "${OUT_DIR}/misc/preprocessed_intervals", mode: 'copy'
     // cache false
@@ -266,17 +348,18 @@ process CollectReadCounts {
     publishDir "${OUT_DIR}/misc/read_counts", mode: 'copy'
 
     input:
-    // set val(sample), file (cram_index_pair)
-    tuple val(sample),file(cram_index_pair)
+    file(cram)
+    file(cram_index)
     file(preprocessed_intervals)
 
     output:
     file(out_file)
 
     script:
-    cram = cram_index_pair[0]
-    cram_index = cram_index_pair[1]
-    out_file = "${cram.simpleName}.counts.hdf5"
+    // cram = cram_index_pair[0]
+    // cram_index = cram_index_pair[1]
+    sample = cram.simpleName
+    out_file = "${sample}.counts.hdf5"
     
     
     """
@@ -311,7 +394,9 @@ process CreateReadCountSomaticPON {
 
     // Only get the normal samples
     read_count_hdf5s.each{
-        if (it =~ /.*P\.counts\.hdf5/){
+        sample = it.simpleName
+        // check if this is one of the controls/parental samples
+        if (LLabUtils.sampleInList(sample, list_of_controls)){
           params_str = "${params_str} -I ${it}"
         }
     }
@@ -488,19 +573,19 @@ process GetGeneSummaryGATK{
 process GenSavvyCNVCoverageSummary {
     echo true
     tag "$sample"
-    cache false
+    // cache false
     publishDir "$publish_dir", mode: 'copy', overwrite: true
     
     input:
-    set val(sample), file(bam_index_pair)
+    file(bam)
+    file(bam_index)
     
     output:
     file(out_file)
     // file(publish_dir)
 
     script:
-    // sample = bam.simpleName
-    bam = bam_index_pair[0]
+    sample = bam.simpleName
     publish_dir = "${OUT_DIR}/misc/SavvyCNV_coverage_summaries"
     out_file = "${sample}.coverageBinner"
     
@@ -511,7 +596,7 @@ process GenSavvyCNVCoverageSummary {
 
 process RunSavvyCNV {
     echo true
-    cache false
+    // cache false
     // tag "$sample"
     
     publishDir "$publish_dir", mode: 'copy', overwrite: true
@@ -538,17 +623,28 @@ process RunSavvyCNV {
 // CNVKIT related
 process RunCNVKitBatchMode{
   echo true
-  cache false
+  // cache false
   publishDir "$publish_dir", mode: 'copy', overwrite: true
+  
   input:
-  path(bams_dir)
+    file("*")
+    file("*")
+  
   output:
   file('results')
+
   script:
+  // Create a string from the list of controls and cases
+  case_bams='' 
+  control_bams = ''
+  list_of_cases.each{ case_bams += "${it}.bam "}
+  list_of_controls.each{ control_bams += "${it}.bam "}
+
   publish_dir = "${OUT_DIR}/misc/CNVKit_calls"
   """
-  cnvkit.py batch -p32 ${bams_dir}/*{C,G}.bam \
-      --normal ${bams_dir}/*P.bam \
+  ls -al .
+  cnvkit.py batch -p32 $case_bams \
+      --normal $control_bams \
       --targets $intervals_list\
       --fasta $ref_fasta  \
       --output-reference my_reference.cnn --output-dir results \
@@ -556,3 +652,15 @@ process RunCNVKitBatchMode{
   """
 }
   
+
+process TestProc {
+    echo true
+
+    input:
+    file("*")
+    file("*")
+    
+    """
+    ls -al .
+    """
+}
