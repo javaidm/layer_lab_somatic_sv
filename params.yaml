@@ -1,0 +1,10 @@
+sampleTsv: "/Shares/layer_shared/projects/cancer_center_tiny/samples.tsv"
+runName: "cancer_center_tiny"
+conditionsTsv: "/Shares/layer_shared/projects/cancer_center_tiny/conditions.tsv"
+sendEmail: False
+logFilesDur:    "logs"
+nfOptions: "-with-reports -with-trace -with-timeline -with-dag flowchart.png"
+authors:
+    - name: "Mahmood Javaid"
+      email: "mahmood.javaid@colorado.edu"
+    
