@@ -58,7 +58,7 @@ if (!ensemblGeneAnnotation) exit 1, 'Specify the ensemblGeneAnnotation (*.gff3.g
 if (!known_indels) exit 1, 'Specify the known indels (*.vcf.gz) file, see --help'  
 if (!ref_fasta) exit 1, 'Specify the refenrece fasta (*.fasta.gz) file, see --help'  
 if (!afOnlyGnomad) exit 1, 'Specify the af_only_gnomad (*.vcf.gz) file, see --help'  
-
+// if (!intervals_list) exit 1, 'Specify the intervals list (*.vcf.gz) file, see --help'  
 
 if (!params.runName) exit 1, 'Specify a run name, see --help'
 runNameWithoutSpaces = params.runName.replaceAll('\\W','_')
